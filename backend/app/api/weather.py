@@ -1,7 +1,8 @@
 from fastapi import APIRouter
+from app.services.weather_service import get_weather_data
 
 router = APIRouter()
 
 @router.get("/weather")
-def get_weather():
-    return {"temp": 30, "wind": "NE"}
+def weather():
+    return get_weather_data()
