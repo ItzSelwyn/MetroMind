@@ -15,7 +15,7 @@ function CityMap() {
     if (!mapContainer.current) return;
 
     async function initMap() {
-      // ===== GET CITY INFO FROM BACKEND =====
+
       const cityRes = await fetch(`${API_BASE}/city-info`);
       const city = await cityRes.json();
 
@@ -24,16 +24,20 @@ function CityMap() {
         style: "mapbox://styles/mapbox/dark-v11",
         center: [city.coordinates.lon, city.coordinates.lat],
         zoom: city.zoom,
-        pitch: 60,
-        bearing: -20,
+
+        // TRUE 2D MAP
+        pitch: 0,
+        bearing: 0,
         antialias: true
       });
 
       mapRef.current = map;
 
+      // Compass + zoom controls
+      map.addControl(new mapboxgl.NavigationControl(), "top-right");
+
       map.on("load", async () => {
 
-        // ===== 3D BUILDINGS =====
         const layers = map.getStyle().layers;
 
         const labelLayerId = layers?.find(
@@ -41,6 +45,7 @@ function CityMap() {
             layer.type === "symbol" && layer.layout?.["text-field"]
         )?.id;
 
+        // ===== 3D BUILDINGS =====
         map.addLayer(
           {
             id: "3d-buildings",
@@ -82,49 +87,6 @@ function CityMap() {
           }
         });
 
-        // ===== POLLUTION MARKER =====
-        const pollutionRes = await fetch(`${API_BASE}/pollution`);
-        const pollution = await pollutionRes.json();
-
-        const pollutionMarker = new mapboxgl.Marker({ color: "orange" })
-          .setLngLat([
-            pollution.coordinates.lon,
-            pollution.coordinates.lat
-          ])
-          .setPopup(
-            new mapboxgl.Popup().setHTML(`
-              <h3>Pollution</h3>
-              <p>AQI: ${pollution.aqi}</p>
-              <p>Status: ${pollution.aqi_label}</p>
-              <p>PM2.5: ${pollution.components.pm2_5}</p>
-            `)
-          )
-          .addTo(map);
-
-        // ===== WIND MARKER =====
-        const weatherRes = await fetch(`${API_BASE}/weather`);
-        const weather = await weatherRes.json();
-
-        const windEl = document.createElement("div");
-        windEl.innerHTML = "🡹";
-        windEl.style.fontSize = "28px";
-        windEl.style.transform = `rotate(${weather.wind.direction}deg)`;
-
-        const windMarker = new mapboxgl.Marker(windEl)
-          .setLngLat([
-            weather.coordinates.lon,
-            weather.coordinates.lat
-          ])
-          .setPopup(
-            new mapboxgl.Popup().setHTML(`
-              <h3>Weather</h3>
-              <p>Temp: ${weather.weather.temperature}°C</p>
-              <p>Humidity: ${weather.weather.humidity}%</p>
-              <p>Wind Speed: ${weather.wind.speed} m/s</p>
-            `)
-          )
-          .addTo(map);
-
         // ===== VEHICLE SOURCE =====
         map.addSource("vehicles", {
           type: "geojson",
@@ -140,59 +102,62 @@ function CityMap() {
           type: "circle",
           source: "vehicles",
           paint: {
-            "circle-radius": 5,
+            "circle-radius": 4,
             "circle-color": "#00ffff"
           }
         });
 
-        // ===== LIVE DATA REFRESH =====
-        setInterval(async () => {
+        // ===== WEATHER + POLLUTION FETCH (EVERY 5 MIN) =====
+        async function refreshEnvironmentData() {
 
-          const pollutionRes = await fetch(`${API_BASE}/pollution`);
-          const pollution = await pollutionRes.json();
+          try {
+            await fetch(`${API_BASE}/weather`);
+            await fetch(`${API_BASE}/pollution`);
+          } catch (err) {
+            console.error("Env data fetch failed", err);
+          }
 
-          pollutionMarker.setPopup(
-            new mapboxgl.Popup().setHTML(`
-              <h3>Pollution</h3>
-              <p>AQI: ${pollution.aqi}</p>
-              <p>Status: ${pollution.aqi_label}</p>
-              <p>PM2.5: ${pollution.components.pm2_5}</p>
-            `)
-          );
+        }
 
-          const weatherRes = await fetch(`${API_BASE}/weather`);
-          const weather = await weatherRes.json();
+        refreshEnvironmentData();
 
-          windEl.style.transform = `rotate(${weather.wind.direction}deg)`;
-
-        }, 5000);
+        setInterval(refreshEnvironmentData, 300000); // 5 min
 
         // ===== SIMULATION TICK =====
         setInterval(async () => {
 
-          const res = await fetch(`${API_BASE}/simulation/tick`);
-          const simData = await res.json();
+          try {
 
-          if (!simData || !simData.vehicles) return;
+            const res = await fetch(`${API_BASE}/simulation/tick`);
+            const simData = await res.json();
 
-          const features = simData.vehicles.map((v: any) => ({
-            type: "Feature",
-            geometry: {
-              type: "Point",
-              coordinates: [v.lon, v.lat]
-            },
-            properties: {
-              id: v.id
-            }
-          })) as any;
+            if (!simData || !simData.vehicles) return;
 
-          const geojson: FeatureCollection<Point> = {
-            type: "FeatureCollection",
-            features
-          };
+            const features = simData.vehicles.map((v: any) => ({
+              type: "Feature",
+              geometry: {
+                type: "Point",
+                coordinates: [v.lon, v.lat]
+              },
+              properties: {
+                id: v.id
+              }
+            })) as any;
 
-          const source = map.getSource("vehicles") as mapboxgl.GeoJSONSource;
-          source.setData(geojson);
+            const geojson: FeatureCollection<Point> = {
+              type: "FeatureCollection",
+              features
+            };
+
+            const source = map.getSource("vehicles") as mapboxgl.GeoJSONSource;
+
+            if (source) source.setData(geojson);
+
+          } catch (err) {
+
+            console.error("Simulation tick failed", err);
+
+          }
 
         }, 1000);
 
