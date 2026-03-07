@@ -1,10 +1,15 @@
+import CityMap from "../components/Map/CityMap";
+import Sidebar from "../components/UI/Sidebar";
+
 function Dashboard() {
   return (
-    <div>
-      <h1>MetroMind Dashboard</h1>
-      <p>Smart City Digital Twin</p>
+    <div style={{ display: "flex", height: "100vh" }}>
+      <Sidebar />
+      <div style={{ flex: 1 }}>
+        <CityMap />
+      </div>
     </div>
-  )
+  );
 }
 
-export default Dashboard
+export default Dashboard;
