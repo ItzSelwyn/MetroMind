@@ -1,22 +1,9 @@
-import { startSimulation } from "../../api/metromindApi";
-
 export default function SimulationControls() {
-
-  const start = async () => {
-
-    await startSimulation(2, 3);
-
-    alert("Simulation started");
-
-  };
 
   return (
     <div>
-
-      <button onClick={start}>
-        Start Traffic Simulation
-      </button>
-
+      <p>Click a road on the map to start simulation</p>
     </div>
   );
+
 }

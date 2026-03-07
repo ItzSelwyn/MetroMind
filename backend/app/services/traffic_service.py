@@ -312,20 +312,27 @@ def get_vehicle_positions():
 # Start Simulation
 # ---------------------------------------------------
 
-def start_simulation(block_u=None, block_v=None):
+def start_simulation(lat=None, lon=None):
 
     global SIMULATION_RUNNING
 
-    if block_u and block_v:
-        block_road(block_u, block_v)
+    if lat is not None and lon is not None:
 
-        near_nodes = list(G.neighbors(block_u))
+        # Find nearest road edge
+        u, v, key = ox.distance.nearest_edges(G, lon, lat)
+
+        print("Blocking edge:", u, v)
+
+        block_road(u, v)
+
+        near_nodes = list(G.neighbors(u))
+
     else:
         near_nodes = None
 
-    spawn_vehicles(100, near_nodes)
-
-    SIMULATION_RUNNING = True
+    if not SIMULATION_RUNNING:
+        spawn_vehicles(100)
+        SIMULATION_RUNNING = True
 
 
 # ---------------------------------------------------

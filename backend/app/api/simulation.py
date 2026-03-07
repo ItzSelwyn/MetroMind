@@ -6,15 +6,14 @@ router = APIRouter()
 @router.post("/simulation/start")
 def start(data: dict):
 
-    start_simulation(
-        data.get("block_u"),
-        data.get("block_v")
-    )
+    lat = data.get("lat")
+    lon = data.get("lon")
+
+    start_simulation(lat, lon)
 
     return {"status": "simulation started"}
 
 
 @router.get("/simulation/tick")
 def tick():
-
     return get_simulation_state()

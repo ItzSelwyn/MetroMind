@@ -8,10 +8,14 @@ mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 const API_BASE = "http://127.0.0.1:8000";
 
 function CityMap() {
+
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
 
+  const simulationStarted = useRef(false);
+
   useEffect(() => {
+
     if (!mapContainer.current) return;
 
     async function initMap() {
@@ -24,8 +28,6 @@ function CityMap() {
         style: "mapbox://styles/mapbox/dark-v11",
         center: [city.coordinates.lon, city.coordinates.lat],
         zoom: city.zoom,
-
-        // TRUE 2D MAP
         pitch: 0,
         bearing: 0,
         antialias: true
@@ -33,10 +35,45 @@ function CityMap() {
 
       mapRef.current = map;
 
-      // Compass + zoom controls
       map.addControl(new mapboxgl.NavigationControl(), "top-right");
 
-      map.on("load", async () => {
+      // ===============================
+      // CLICK ROAD TO START SIMULATION
+      // ===============================
+
+      map.on("click", async (e) => {
+
+        if (simulationStarted.current) return;
+
+        const lat = e.lngLat.lat;
+        const lon = e.lngLat.lng;
+
+        try {
+
+          await fetch(`${API_BASE}/simulation/start`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              lat,
+              lon
+            })
+          });
+
+          simulationStarted.current = true;
+
+          console.log("Simulation started at:", lat, lon);
+
+        } catch (err) {
+
+          console.error("Simulation start failed", err);
+
+        }
+
+      });
+
+      map.on("load", () => {
 
         const layers = map.getStyle().layers;
 
@@ -45,7 +82,10 @@ function CityMap() {
             layer.type === "symbol" && layer.layout?.["text-field"]
         )?.id;
 
-        // ===== 3D BUILDINGS =====
+        // ===============================
+        // 3D BUILDINGS
+        // ===============================
+
         map.addLayer(
           {
             id: "3d-buildings",
@@ -64,7 +104,10 @@ function CityMap() {
           labelLayerId
         );
 
-        // ===== TRAFFIC ROADS =====
+        // ===============================
+        // ROADS
+        // ===============================
+
         map.addLayer({
           id: "traffic-roads",
           type: "line",
@@ -87,7 +130,10 @@ function CityMap() {
           }
         });
 
-        // ===== VEHICLE SOURCE =====
+        // ===============================
+        // VEHICLE SOURCE
+        // ===============================
+
         map.addSource("vehicles", {
           type: "geojson",
           data: {
@@ -96,7 +142,10 @@ function CityMap() {
           }
         });
 
-        // ===== VEHICLE LAYER =====
+        // ===============================
+        // VEHICLE LAYER
+        // ===============================
+
         map.addLayer({
           id: "vehicles-layer",
           type: "circle",
@@ -107,23 +156,33 @@ function CityMap() {
           }
         });
 
-        // ===== WEATHER + POLLUTION FETCH (EVERY 5 MIN) =====
+        // ===============================
+        // WEATHER + POLLUTION FETCH
+        // ===============================
+
         async function refreshEnvironmentData() {
 
           try {
+
             await fetch(`${API_BASE}/weather`);
             await fetch(`${API_BASE}/pollution`);
+
           } catch (err) {
+
             console.error("Env data fetch failed", err);
+
           }
 
         }
 
         refreshEnvironmentData();
 
-        setInterval(refreshEnvironmentData, 300000); // 5 min
+        setInterval(refreshEnvironmentData, 300000);
 
-        // ===== SIMULATION TICK =====
+        // ===============================
+        // SIMULATION TICK
+        // ===============================
+
         setInterval(async () => {
 
           try {
@@ -131,7 +190,7 @@ function CityMap() {
             const res = await fetch(`${API_BASE}/simulation/tick`);
             const simData = await res.json();
 
-            if (!simData || !simData.vehicles) return;
+            if (!simData?.vehicles) return;
 
             const features = simData.vehicles.map((v: any) => ({
               type: "Feature",
@@ -142,7 +201,7 @@ function CityMap() {
               properties: {
                 id: v.id
               }
-            })) as any;
+            }));
 
             const geojson: FeatureCollection<Point> = {
               type: "FeatureCollection",
@@ -162,12 +221,15 @@ function CityMap() {
         }, 1000);
 
       });
+
     }
 
     initMap();
 
     return () => {
+
       mapRef.current?.remove();
+
     };
 
   }, []);
@@ -181,6 +243,7 @@ function CityMap() {
       }}
     />
   );
+
 }
 
 export default CityMap;

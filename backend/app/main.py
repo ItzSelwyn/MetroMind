@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import weather, pollution, city, traffic
+from app.api import weather, pollution, city, simulation
 
 app = FastAPI()
 
@@ -23,7 +23,7 @@ app.add_middleware(
 app.include_router(weather.router)
 app.include_router(pollution.router)
 app.include_router(city.router)
-app.include_router(traffic.router)
+app.include_router(simulation.router)
 
 @app.get("/")
 def root():
