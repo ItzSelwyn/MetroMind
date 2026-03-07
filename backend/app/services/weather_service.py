@@ -1,6 +1,7 @@
 import requests
 import os
 from dotenv import load_dotenv
+from app.config.city_config import CITY_CONFIG
 
 load_dotenv()
 
@@ -8,14 +9,14 @@ API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
 BASE_URL = "https://api.openweathermap.org/data/2.5/weather"
 
-COIMBATORE_LAT = 11.0168
-COIMBATORE_LON = 76.9558
+LAT = CITY_CONFIG["coordinates"]["lat"]
+LON = CITY_CONFIG["coordinates"]["lon"]
 
 
 def get_weather_data():
     params = {
-        "lat": COIMBATORE_LAT,
-        "lon": COIMBATORE_LON,
+        "lat": LAT,
+        "lon": LON,
         "appid": API_KEY,
         "units": "metric"
     }
@@ -27,8 +28,8 @@ def get_weather_data():
     return {
     "city": "Coimbatore",
     "coordinates": {
-        "lat": COIMBATORE_LAT,
-        "lon": COIMBATORE_LON
+        "lat": LAT,
+        "lon": LON
     },
     "weather": {
         "temperature": data["main"]["temp"],
