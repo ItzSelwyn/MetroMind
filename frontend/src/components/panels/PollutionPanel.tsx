@@ -9,10 +9,10 @@ export default function PollutionPanel() {
     getPollution().then(setPollution);
   }, []);
 
-  if (!pollution) return <div>Loading pollution...</div>;
+  if (!pollution) return <div className="panel panel--plain">Loading pollution...</div>;
 
   return (
-    <div className="panel">
+    <div className="panel panel--plain">
 
       <h3>Pollution</h3>
 

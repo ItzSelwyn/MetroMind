@@ -1,18 +1,70 @@
 import { useEffect, useRef } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import type { FeatureCollection, Point } from "geojson";
+import type { Feature, FeatureCollection, LineString, Point } from "geojson";
+import {
+  getCityInfo,
+  getPollution,
+  getSimulationTick,
+  getWeather,
+  startSimulation,
+  type BlockedRoadFeature,
+} from "../../api/metromindApi";
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
-const API_BASE = "http://127.0.0.1:8000";
+interface CityMapProps {
+  isBlockModeArmed: boolean;
+  blockedRoad: BlockedRoadFeature | null;
+  onRoadBlocked: (road: BlockedRoadFeature | null) => void;
+}
 
-function CityMap() {
+function getBlockedRoadCollection(
+  blockedRoad: BlockedRoadFeature | null,
+): FeatureCollection<LineString> {
+  return {
+    type: "FeatureCollection",
+    features: blockedRoad ? [blockedRoad] : [],
+  };
+}
+
+function CityMap({
+  isBlockModeArmed,
+  blockedRoad,
+  onRoadBlocked,
+}: CityMapProps) {
 
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
 
   const simulationStarted = useRef(false);
+  const simulationTickIntervalRef = useRef<number | null>(null);
+  const environmentIntervalRef = useRef<number | null>(null);
+  const isRequestInFlight = useRef(false);
+  const blockModeArmedRef = useRef(isBlockModeArmed);
+  const onRoadBlockedRef = useRef(onRoadBlocked);
+
+  function updateBlockedRoadSource(road: BlockedRoadFeature | null) {
+    const map = mapRef.current;
+
+    if (!map) {
+      return;
+    }
+
+    const source = map.getSource("blocked-road") as mapboxgl.GeoJSONSource | undefined;
+
+    if (source) {
+      source.setData(getBlockedRoadCollection(road));
+    }
+  }
+
+  useEffect(() => {
+    blockModeArmedRef.current = isBlockModeArmed;
+  }, [isBlockModeArmed]);
+
+  useEffect(() => {
+    onRoadBlockedRef.current = onRoadBlocked;
+  }, [onRoadBlocked]);
 
   useEffect(() => {
 
@@ -20,8 +72,7 @@ function CityMap() {
 
     async function initMap() {
 
-      const cityRes = await fetch(`${API_BASE}/city-info`);
-      const city = await cityRes.json();
+      const city = await getCityInfo();
 
       const map = new mapboxgl.Map({
         container: mapContainer.current!,
@@ -34,6 +85,7 @@ function CityMap() {
       });
 
       mapRef.current = map;
+      map.getCanvas().style.cursor = blockModeArmedRef.current ? "crosshair" : "";
 
       map.addControl(new mapboxgl.NavigationControl(), "top-right");
 
@@ -43,31 +95,32 @@ function CityMap() {
 
       map.on("click", async (e) => {
 
-        if (simulationStarted.current) return;
+        if (!blockModeArmedRef.current || simulationStarted.current || isRequestInFlight.current) {
+          return;
+        }
 
         const lat = e.lngLat.lat;
         const lon = e.lngLat.lng;
 
         try {
 
-          await fetch(`${API_BASE}/simulation/start`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              lat,
-              lon
-            })
-          });
+          isRequestInFlight.current = true;
+
+          const response = await startSimulation(lat, lon);
 
           simulationStarted.current = true;
+          onRoadBlockedRef.current(response.blocked_road ?? null);
+          updateBlockedRoadSource(response.blocked_road ?? null);
 
           console.log("Simulation started at:", lat, lon);
 
         } catch (err) {
 
           console.error("Simulation start failed", err);
+
+        } finally {
+
+          isRequestInFlight.current = false;
 
         }
 
@@ -128,7 +181,7 @@ function CityMap() {
               "#555"
             ]
           }
-        });
+        }, labelLayerId);
 
         // ===============================
         // VEHICLE SOURCE
@@ -140,6 +193,11 @@ function CityMap() {
             type: "FeatureCollection",
             features: []
           }
+        });
+
+        map.addSource("blocked-road", {
+          type: "geojson",
+          data: getBlockedRoadCollection(blockedRoad)
         });
 
         // ===============================
@@ -154,7 +212,40 @@ function CityMap() {
             "circle-radius": 4,
             "circle-color": "#00ffff"
           }
-        });
+        }, labelLayerId);
+
+        map.addLayer({
+          id: "blocked-road-glow",
+          type: "line",
+          source: "blocked-road",
+          layout: {
+            "line-cap": "round",
+            "line-join": "round"
+          },
+          paint: {
+            "line-color": "#7f1d1d",
+            "line-width": 16,
+            "line-opacity": 0.45
+          }
+        }, labelLayerId);
+
+        map.addLayer({
+          id: "blocked-road-line",
+          type: "line",
+          source: "blocked-road",
+          layout: {
+            "line-cap": "round",
+            "line-join": "round"
+          },
+          paint: {
+            "line-color": "#f97316",
+            "line-width": 8,
+            "line-dasharray": [0.6, 1.2],
+            "line-opacity": 0.95
+          }
+        }, labelLayerId);
+
+        updateBlockedRoadSource(blockedRoad);
 
         // ===============================
         // WEATHER + POLLUTION FETCH
@@ -164,8 +255,8 @@ function CityMap() {
 
           try {
 
-            await fetch(`${API_BASE}/weather`);
-            await fetch(`${API_BASE}/pollution`);
+            await getWeather();
+            await getPollution();
 
           } catch (err) {
 
@@ -177,29 +268,28 @@ function CityMap() {
 
         refreshEnvironmentData();
 
-        setInterval(refreshEnvironmentData, 300000);
+  environmentIntervalRef.current = window.setInterval(refreshEnvironmentData, 300000);
 
         // ===============================
         // SIMULATION TICK
         // ===============================
 
-        setInterval(async () => {
+        simulationTickIntervalRef.current = window.setInterval(async () => {
 
           try {
 
-            const res = await fetch(`${API_BASE}/simulation/tick`);
-            const simData = await res.json();
+            const simData = await getSimulationTick();
 
             if (!simData?.vehicles) return;
 
-            const features = simData.vehicles.map((v: any) => ({
+            const features: Feature<Point>[] = simData.vehicles.map((vehicle) => ({
               type: "Feature",
               geometry: {
                 type: "Point",
-                coordinates: [v.lon, v.lat]
+                coordinates: [vehicle.lon, vehicle.lat]
               },
               properties: {
-                id: v.id
+                id: vehicle.id
               }
             }));
 
@@ -228,11 +318,36 @@ function CityMap() {
 
     return () => {
 
+      if (environmentIntervalRef.current !== null) {
+        window.clearInterval(environmentIntervalRef.current);
+        environmentIntervalRef.current = null;
+      }
+
+      if (simulationTickIntervalRef.current !== null) {
+        window.clearInterval(simulationTickIntervalRef.current);
+        simulationTickIntervalRef.current = null;
+      }
+
       mapRef.current?.remove();
+      mapRef.current = null;
 
     };
 
   }, []);
+
+  useEffect(() => {
+    updateBlockedRoadSource(blockedRoad);
+  }, [blockedRoad]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+
+    if (!map) {
+      return;
+    }
+
+    map.getCanvas().style.cursor = isBlockModeArmed ? "crosshair" : "";
+  }, [isBlockModeArmed]);
 
   return (
     <div

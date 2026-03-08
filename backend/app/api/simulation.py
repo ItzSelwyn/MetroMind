@@ -9,9 +9,7 @@ def start(data: dict):
     lat = data.get("lat")
     lon = data.get("lon")
 
-    start_simulation(lat, lon)
-
-    return {"status": "simulation started"}
+    return start_simulation(lat, lon)
 
 
 @router.get("/simulation/tick")

@@ -9,10 +9,10 @@ export default function WeatherPanel() {
     getWeather().then(setWeather);
   }, []);
 
-  if (!weather) return <div>Loading weather...</div>;
+  if (!weather) return <div className="panel panel--plain">Loading weather...</div>;
 
   return (
-    <div className="panel">
+    <div className="panel panel--plain">
 
       <h3>Weather</h3>
 

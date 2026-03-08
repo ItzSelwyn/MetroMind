@@ -64,6 +64,7 @@ vehicles = []
 edge_vehicle_count = defaultdict(int)
 
 blocked_edges = set()
+blocked_road_feature = None
 
 SIMULATION_RUNNING = False
 
@@ -94,6 +95,26 @@ def get_edge_length(u, v):
         return 50
 
     return data[0].get("length", 50)
+
+
+def get_edge_coordinates(u, v):
+
+    data = G.get_edge_data(u, v)
+
+    if data:
+        first_edge = next(iter(data.values()))
+        geometry = first_edge.get("geometry")
+
+        if geometry is not None:
+            return [[lon, lat] for lon, lat in geometry.coords]
+
+    start_node = G.nodes[u]
+    end_node = G.nodes[v]
+
+    return [
+        [start_node["x"], start_node["y"]],
+        [end_node["x"], end_node["y"]]
+    ]
 
 
 def get_capacity(highway):
@@ -168,33 +189,73 @@ def compute_route(start, end):
         return None
 
 
+def get_spawn_seed_nodes(u, v):
+
+    candidate_nodes = {u, v}
+
+    for node in (u, v):
+        if G.has_node(node):
+            candidate_nodes.update(G.neighbors(node))
+
+    first_ring_nodes = list(candidate_nodes)
+
+    for node in first_ring_nodes:
+        if G.has_node(node):
+            candidate_nodes.update(G.neighbors(node))
+
+    return list(candidate_nodes)
+
+
 # ---------------------------------------------------
 # Spawn Vehicles
 # ---------------------------------------------------
 
 def spawn_vehicles(count=100, near_nodes=None):
 
-    global vehicles
+    global vehicles, edge_vehicle_count
 
     vehicles = []
+    edge_vehicle_count = defaultdict(int)
+
+    candidate_nodes = near_nodes if near_nodes else nodes
 
     for i in range(count):
 
-        if near_nodes:
-            start = random.choice(near_nodes)
-        else:
-            start = random.choice(nodes)
+        start = random.choice(candidate_nodes)
 
         end = random.choice(nodes)
 
         route = compute_route(start, end)
 
-        if route:
+        if route and len(route) > 1:
 
             v = Vehicle(i, route)
+            v.progress = random.random() * 0.85
             vehicles.append(v)
 
+            first_u = route[0]
+            first_v = route[1]
+            edge_vehicle_count[(first_u, first_v)] += 1
+
     print("Spawned vehicles:", len(vehicles))
+
+
+def build_blocked_road_feature(u, v):
+
+    coordinates = get_edge_coordinates(u, v)
+
+    return {
+        "type": "Feature",
+        "geometry": {
+            "type": "LineString",
+            "coordinates": coordinates
+        },
+        "properties": {
+            "u": u,
+            "v": v,
+            "status": "blocked"
+        }
+    }
 
 
 # ---------------------------------------------------
@@ -203,7 +264,11 @@ def spawn_vehicles(count=100, near_nodes=None):
 
 def block_road(u, v):
 
+    global blocked_road_feature
+
     if G.has_edge(u, v):
+
+        blocked_road_feature = build_blocked_road_feature(u, v)
 
         G.remove_edge(u, v)
         blocked_edges.add((u, v))
@@ -259,15 +324,47 @@ def move_vehicle(vehicle):
 
 def interpolate_position(u, v, progress):
 
-    lat1 = G.nodes[u]["y"]
-    lon1 = G.nodes[u]["x"]
+    coordinates = get_edge_coordinates(u, v)
 
-    lat2 = G.nodes[v]["y"]
-    lon2 = G.nodes[v]["x"]
+    if len(coordinates) == 1:
+        lon, lat = coordinates[0]
+        return lat, lon
 
-    lat = lat1 + (lat2 - lat1) * progress
-    lon = lon1 + (lon2 - lon1) * progress
+    segment_lengths = []
+    total_length = 0
 
+    for index in range(len(coordinates) - 1):
+        lon1, lat1 = coordinates[index]
+        lon2, lat2 = coordinates[index + 1]
+
+        segment_length = sqrt((lon2 - lon1) ** 2 + (lat2 - lat1) ** 2)
+        segment_lengths.append(segment_length)
+        total_length += segment_length
+
+    if total_length == 0:
+        lon, lat = coordinates[0]
+        return lat, lon
+
+    target_distance = total_length * max(0, min(progress, 1))
+    distance_travelled = 0
+
+    for index, segment_length in enumerate(segment_lengths):
+        lon1, lat1 = coordinates[index]
+        lon2, lat2 = coordinates[index + 1]
+
+        if distance_travelled + segment_length >= target_distance:
+            if segment_length == 0:
+                return lat1, lon1
+
+            segment_progress = (target_distance - distance_travelled) / segment_length
+            lat = lat1 + (lat2 - lat1) * segment_progress
+            lon = lon1 + (lon2 - lon1) * segment_progress
+
+            return lat, lon
+
+        distance_travelled += segment_length
+
+    lon, lat = coordinates[-1]
     return lat, lon
 
 
@@ -325,14 +422,19 @@ def start_simulation(lat=None, lon=None):
 
         block_road(u, v)
 
-        near_nodes = list(G.neighbors(u))
+        near_nodes = get_spawn_seed_nodes(u, v)
 
     else:
         near_nodes = None
 
     if not SIMULATION_RUNNING:
-        spawn_vehicles(100)
+        spawn_vehicles(100, near_nodes)
         SIMULATION_RUNNING = True
+
+    return {
+        "started": True,
+        "blocked_road": blocked_road_feature
+    }
 
 
 # ---------------------------------------------------
@@ -342,7 +444,10 @@ def start_simulation(lat=None, lon=None):
 def get_simulation_state():
 
     if not SIMULATION_RUNNING:
-        return {"vehicles": []}
+        return {
+            "vehicles": [],
+            "blocked_road": blocked_road_feature
+        }
 
     simulation_step()
 
@@ -350,5 +455,6 @@ def get_simulation_state():
 
     return {
         "vehicle_count": len(vehicles_data),
-        "vehicles": vehicles_data
+        "vehicles": vehicles_data,
+        "blocked_road": blocked_road_feature
     }
