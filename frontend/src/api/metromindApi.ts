@@ -1,12 +1,53 @@
-import type { Feature, LineString } from "geojson";
+import type { Feature, LineString, MultiLineString } from "geojson";
 
 const API_BASE = "http://127.0.0.1:8000";
 
-export type BlockedRoadFeature = Feature<LineString>;
+export type BlockedRoadFeature = Feature<LineString | MultiLineString>;
+
+export interface RerouteSummary {
+  road_labels: string[];
+  distance_km: number;
+  travel_minutes: number;
+}
+
+export interface ImpactRoadStat {
+  road: string;
+  road_type: string;
+  length_km: number;
+  capacity: number;
+  map_feature?: BlockedRoadFeature;
+}
+
+export interface HotspotRoadStat extends ImpactRoadStat {
+  estimated_pressure: number;
+  estimated_travel_minutes: number;
+}
+
+export interface PrimaryReroute {
+  before: RerouteSummary;
+  after: RerouteSummary;
+  extra_distance_km: number;
+  extra_travel_minutes: number;
+  reroute_path: BlockedRoadFeature;
+}
+
+export interface BlockImpactAnalysis {
+  blocked_road: ImpactRoadStat;
+  affected_trip_count: number;
+  primary_reroute: PrimaryReroute | null;
+  top_reused_roads: Array<ImpactRoadStat & { reuse_count: number }>;
+  traffic_hotspots: HotspotRoadStat[];
+}
 
 export interface SimulationStartResponse {
   started: boolean;
   blocked_road: BlockedRoadFeature | null;
+  analysis: BlockImpactAnalysis | null;
+}
+
+export interface MapSelectionPoint {
+  lat: number;
+  lon: number;
 }
 
 export interface SimulationTickResponse {
@@ -17,6 +58,7 @@ export interface SimulationTickResponse {
     lon: number;
   }>;
   blocked_road?: BlockedRoadFeature | null;
+  analysis?: BlockImpactAnalysis | null;
 }
 
 // CITY INFO
@@ -38,15 +80,17 @@ export async function getPollution() {
 }
 
 // START SIMULATION
-export async function startSimulation(lat: number, lon: number) {
+export async function startSimulation(startPoint: MapSelectionPoint, endPoint: MapSelectionPoint) {
   const res = await fetch(`${API_BASE}/simulation/start`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      lat,
-      lon
+      start_lat: startPoint.lat,
+      start_lon: startPoint.lon,
+      end_lat: endPoint.lat,
+      end_lon: endPoint.lon
     })
   });
 

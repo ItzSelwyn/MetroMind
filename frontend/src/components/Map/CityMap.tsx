@@ -1,48 +1,129 @@
 import { useEffect, useRef } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import type { Feature, FeatureCollection, LineString, Point } from "geojson";
+import type { Feature, FeatureCollection, LineString, MultiLineString, Point } from "geojson";
 import {
   getCityInfo,
   getPollution,
   getSimulationTick,
   getWeather,
-  startSimulation,
   type BlockedRoadFeature,
+  type MapSelectionPoint,
 } from "../../api/metromindApi";
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
 interface CityMapProps {
-  isBlockModeArmed: boolean;
   blockedRoad: BlockedRoadFeature | null;
-  onRoadBlocked: (road: BlockedRoadFeature | null) => void;
+  selectionMode: "idle" | "start" | "end";
+  startPoint: MapSelectionPoint | null;
+  endPoint: MapSelectionPoint | null;
+  analysisSelection: BlockedRoadFeature | null;
+  onSelectionPoint: (point: MapSelectionPoint, mode: "start" | "end") => void;
 }
 
 function getBlockedRoadCollection(
   blockedRoad: BlockedRoadFeature | null,
-): FeatureCollection<LineString> {
+): FeatureCollection<LineString | MultiLineString> {
   return {
     type: "FeatureCollection",
     features: blockedRoad ? [blockedRoad] : [],
   };
 }
 
+function getAnalysisSelectionCollection(
+  feature: BlockedRoadFeature | null,
+): FeatureCollection<LineString | MultiLineString> {
+  return {
+    type: "FeatureCollection",
+    features: feature ? [feature] : [],
+  };
+}
+
+function getSelectionPointCollection(
+  startPoint: MapSelectionPoint | null,
+  endPoint: MapSelectionPoint | null,
+): FeatureCollection<Point> {
+  const features: Feature<Point>[] = [];
+
+  if (startPoint) {
+    features.push({
+      type: "Feature",
+      geometry: {
+        type: "Point",
+        coordinates: [startPoint.lon, startPoint.lat]
+      },
+      properties: {
+        kind: "start"
+      }
+    });
+  }
+
+  if (endPoint) {
+    features.push({
+      type: "Feature",
+      geometry: {
+        type: "Point",
+        coordinates: [endPoint.lon, endPoint.lat]
+      },
+      properties: {
+        kind: "end"
+      }
+    });
+  }
+
+  return {
+    type: "FeatureCollection",
+    features
+  };
+}
+
+function getSelectionPreviewCollection(
+  startPoint: MapSelectionPoint | null,
+  endPoint: MapSelectionPoint | null,
+): FeatureCollection<LineString> {
+  if (!startPoint || !endPoint) {
+    return {
+      type: "FeatureCollection",
+      features: []
+    };
+  }
+
+  return {
+    type: "FeatureCollection",
+    features: [{
+      type: "Feature",
+      geometry: {
+        type: "LineString",
+        coordinates: [
+          [startPoint.lon, startPoint.lat],
+          [endPoint.lon, endPoint.lat]
+        ]
+      },
+      properties: {
+        kind: "selection-preview"
+      }
+    }]
+  };
+}
+
 function CityMap({
-  isBlockModeArmed,
   blockedRoad,
-  onRoadBlocked,
+  selectionMode,
+  startPoint,
+  endPoint,
+  analysisSelection,
+  onSelectionPoint,
 }: CityMapProps) {
 
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
 
-  const simulationStarted = useRef(false);
   const simulationTickIntervalRef = useRef<number | null>(null);
   const environmentIntervalRef = useRef<number | null>(null);
-  const isRequestInFlight = useRef(false);
-  const blockModeArmedRef = useRef(isBlockModeArmed);
-  const onRoadBlockedRef = useRef(onRoadBlocked);
+  const selectionModeRef = useRef(selectionMode);
+  const blockedRoadRef = useRef(blockedRoad);
+  const onSelectionPointRef = useRef(onSelectionPoint);
 
   function updateBlockedRoadSource(road: BlockedRoadFeature | null) {
     const map = mapRef.current;
@@ -58,13 +139,65 @@ function CityMap({
     }
   }
 
-  useEffect(() => {
-    blockModeArmedRef.current = isBlockModeArmed;
-  }, [isBlockModeArmed]);
+  function updateAnalysisSelectionSource(feature: BlockedRoadFeature | null) {
+    const map = mapRef.current;
+
+    if (!map) {
+      return;
+    }
+
+    const source = map.getSource("analysis-selection") as mapboxgl.GeoJSONSource | undefined;
+
+    if (source) {
+      source.setData(getAnalysisSelectionCollection(feature));
+    }
+  }
+
+  function updateSelectionPointSource(
+    currentStartPoint: MapSelectionPoint | null,
+    currentEndPoint: MapSelectionPoint | null,
+  ) {
+    const map = mapRef.current;
+
+    if (!map) {
+      return;
+    }
+
+    const source = map.getSource("selection-points") as mapboxgl.GeoJSONSource | undefined;
+
+    if (source) {
+      source.setData(getSelectionPointCollection(currentStartPoint, currentEndPoint));
+    }
+  }
+
+  function updateSelectionPreviewSource(
+    currentStartPoint: MapSelectionPoint | null,
+    currentEndPoint: MapSelectionPoint | null,
+  ) {
+    const map = mapRef.current;
+
+    if (!map) {
+      return;
+    }
+
+    const source = map.getSource("selection-preview") as mapboxgl.GeoJSONSource | undefined;
+
+    if (source) {
+      source.setData(getSelectionPreviewCollection(currentStartPoint, currentEndPoint));
+    }
+  }
 
   useEffect(() => {
-    onRoadBlockedRef.current = onRoadBlocked;
-  }, [onRoadBlocked]);
+    selectionModeRef.current = selectionMode;
+  }, [selectionMode]);
+
+  useEffect(() => {
+    blockedRoadRef.current = blockedRoad;
+  }, [blockedRoad]);
+
+  useEffect(() => {
+    onSelectionPointRef.current = onSelectionPoint;
+  }, [onSelectionPoint]);
 
   useEffect(() => {
 
@@ -85,7 +218,7 @@ function CityMap({
       });
 
       mapRef.current = map;
-      map.getCanvas().style.cursor = blockModeArmedRef.current ? "crosshair" : "";
+      map.getCanvas().style.cursor = selectionModeRef.current === "idle" ? "" : "crosshair";
 
       map.addControl(new mapboxgl.NavigationControl(), "top-right");
 
@@ -93,36 +226,16 @@ function CityMap({
       // CLICK ROAD TO START SIMULATION
       // ===============================
 
-      map.on("click", async (e) => {
+      map.on("click", (e) => {
 
-        if (!blockModeArmedRef.current || simulationStarted.current || isRequestInFlight.current) {
+        if (blockedRoadRef.current || selectionModeRef.current === "idle") {
           return;
         }
 
-        const lat = e.lngLat.lat;
-        const lon = e.lngLat.lng;
-
-        try {
-
-          isRequestInFlight.current = true;
-
-          const response = await startSimulation(lat, lon);
-
-          simulationStarted.current = true;
-          onRoadBlockedRef.current(response.blocked_road ?? null);
-          updateBlockedRoadSource(response.blocked_road ?? null);
-
-          console.log("Simulation started at:", lat, lon);
-
-        } catch (err) {
-
-          console.error("Simulation start failed", err);
-
-        } finally {
-
-          isRequestInFlight.current = false;
-
-        }
+        onSelectionPointRef.current({
+          lat: e.lngLat.lat,
+          lon: e.lngLat.lng
+        }, selectionModeRef.current);
 
       });
 
@@ -200,6 +313,21 @@ function CityMap({
           data: getBlockedRoadCollection(blockedRoad)
         });
 
+        map.addSource("analysis-selection", {
+          type: "geojson",
+          data: getAnalysisSelectionCollection(analysisSelection)
+        });
+
+        map.addSource("selection-points", {
+          type: "geojson",
+          data: getSelectionPointCollection(startPoint, endPoint)
+        });
+
+        map.addSource("selection-preview", {
+          type: "geojson",
+          data: getSelectionPreviewCollection(startPoint, endPoint)
+        });
+
         // ===============================
         // VEHICLE LAYER
         // ===============================
@@ -245,7 +373,86 @@ function CityMap({
           }
         }, labelLayerId);
 
+        map.addLayer({
+          id: "analysis-selection-glow",
+          type: "line",
+          source: "analysis-selection",
+          layout: {
+            "line-cap": "round",
+            "line-join": "round"
+          },
+          paint: {
+            "line-color": "#38bdf8",
+            "line-width": 18,
+            "line-opacity": 0.22
+          }
+        }, labelLayerId);
+
+        map.addLayer({
+          id: "analysis-selection-line",
+          type: "line",
+          source: "analysis-selection",
+          layout: {
+            "line-cap": "round",
+            "line-join": "round"
+          },
+          paint: {
+            "line-color": [
+              "match",
+              ["get", "status"],
+              "reroute", "#38bdf8",
+              "hotspot-road", "#fb7185",
+              "reused-road", "#facc15",
+              "#38bdf8"
+            ],
+            "line-width": [
+              "match",
+              ["get", "status"],
+              "reroute", 8,
+              6
+            ],
+            "line-opacity": 0.95
+          }
+        }, labelLayerId);
+
+        map.addLayer({
+          id: "selection-preview-line",
+          type: "line",
+          source: "selection-preview",
+          layout: {
+            "line-cap": "round",
+            "line-join": "round"
+          },
+          paint: {
+            "line-color": "#a78bfa",
+            "line-width": 4,
+            "line-opacity": 0.75,
+            "line-dasharray": [1, 1.2]
+          }
+        }, labelLayerId);
+
+        map.addLayer({
+          id: "selection-points-layer",
+          type: "circle",
+          source: "selection-points",
+          paint: {
+            "circle-radius": 7,
+            "circle-stroke-width": 2,
+            "circle-stroke-color": "#e2e8f0",
+            "circle-color": [
+              "match",
+              ["get", "kind"],
+              "start", "#22c55e",
+              "end", "#f97316",
+              "#e2e8f0"
+            ]
+          }
+        }, labelLayerId);
+
         updateBlockedRoadSource(blockedRoad);
+        updateAnalysisSelectionSource(analysisSelection);
+        updateSelectionPointSource(startPoint, endPoint);
+        updateSelectionPreviewSource(startPoint, endPoint);
 
         // ===============================
         // WEATHER + POLLUTION FETCH
@@ -340,14 +547,23 @@ function CityMap({
   }, [blockedRoad]);
 
   useEffect(() => {
+    updateSelectionPointSource(startPoint, endPoint);
+    updateSelectionPreviewSource(startPoint, endPoint);
+  }, [startPoint, endPoint]);
+
+  useEffect(() => {
+    updateAnalysisSelectionSource(analysisSelection);
+  }, [analysisSelection]);
+
+  useEffect(() => {
     const map = mapRef.current;
 
     if (!map) {
       return;
     }
 
-    map.getCanvas().style.cursor = isBlockModeArmed ? "crosshair" : "";
-  }, [isBlockModeArmed]);
+    map.getCanvas().style.cursor = selectionMode === "idle" ? "" : "crosshair";
+  }, [selectionMode]);
 
   return (
     <div

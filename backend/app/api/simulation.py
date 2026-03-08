@@ -6,10 +6,12 @@ router = APIRouter()
 @router.post("/simulation/start")
 def start(data: dict):
 
-    lat = data.get("lat")
-    lon = data.get("lon")
+    start_lat = data.get("start_lat")
+    start_lon = data.get("start_lon")
+    end_lat = data.get("end_lat")
+    end_lon = data.get("end_lon")
 
-    return start_simulation(lat, lon)
+    return start_simulation(start_lat, start_lon, end_lat, end_lon)
 
 
 @router.get("/simulation/tick")
